@@ -42,9 +42,15 @@ from torch.nn import Module, Sequential, Conv2d, MaxPool2d, AdaptiveMaxPool2d,\
     BatchNorm2d, Dropout, ReLU, Tanh, Sigmoid, Linear
 from torchvision.transforms import functional as TF
 from torchvision.transforms import RandomAffine, RandomPerspective
+import matplotlib
+
+def nan_to_num(matrix):
+    matrix[matrix.isnan()] = 0
+    return matrix
 
 class CNN_landmarks(Module):
     def __init__(self, landmarks_number, resize):
+        print(matplotlib.__version__, 'plt')
         super().__init__()
         self.bn = BatchNorm2d(3)
         self.conv1 = Sequential(Conv2d(3, 32, 3, padding=1),  # BatchNorm2d(32),
@@ -67,10 +73,12 @@ class CNN_landmarks(Module):
         return self.fc(x.view(x.size()[0], -1))
 
 class FaceLandmarks(Dataset):
-    def __init__(self, path: Path, landmarks_number=4, mode='PIL', resize=8):
+    def __init__(self, path: Path, landmarks_number=4, mode='PIL', resize=8, distortion_scale=0.5, max_affine_degree=120):
         # 33 -- nose, 41 -- left eye, 44 -- right eye, 62 -- mouth
         landmarks_list = [41, 44, 33, 62]
         self.landmarks_list = landmarks_list[: landmarks_number]
+        self.distortion_scale = distortion_scale
+        self.max_affine_degree = max_affine_degree
         self.resize = resize
         super().__init__()
         self.path = Path('./')
@@ -85,6 +93,7 @@ class FaceLandmarks(Dataset):
         self.mode = mode
         self.get_rand_affine_params = RandomAffine.get_params
         self.get_rand_perspective_params = RandomPerspective.get_params
+        self.persp_params = []
 
     def __len__(self):
         return len(self.all_data.keys())
@@ -108,34 +117,44 @@ class FaceLandmarks(Dataset):
         # face_landmarks = self.all_data[str(index)]['face_landmarks']
         if self.mode == 'tensor':
             img = ToTensor()(img)
-            face_landmarks = torch.tensor(face_landmarks) / self.resize
-            max_affine_degree = 120
-            affine_inerval = [-max_affine_degree, max_affine_degree]
-            affine_params = self.get_rand_affine_params(affine_inerval, None, None, None, img_size=new_size)
-            persp_params = self.get_rand_perspective_params(width=new_size[0], height=new_size[1], distortion_scale=0.8)
-            persp_coeffs = transform_utils.find_perspective_coeffs(*persp_params)
-            img = TF.affine(img, *affine_params, resample=2)
-            img = TF.perspective(img, *persp_params)
-            face_landmarks = transform_utils.rotate_marks(face_landmarks, affine_params[0], array(new_size)/2)
+            face_landmarks = torch.Tensor(face_landmarks) / self.resize
+            if self.max_affine_degree > 0:
+                affine_inerval = [-self.max_affine_degree, self.max_affine_degree]
+                affine_params = self.get_rand_affine_params(affine_inerval, None, None, None, img_size=new_size)
+                img = TF.affine(img, *affine_params, resample=2)
+                face_landmarks = transform_utils.rotate_marks(face_landmarks, affine_params[0], array(new_size)/2)
             # print('p_params', persp_params)
             # print('aff', face_landmarks)
-            face_landmarks = transform_utils.perspective_marks(face_landmarks, persp_coeffs)
+            if self.distortion_scale > 0:
+                self.persp_params = self.get_rand_perspective_params(width=new_size[0], height=new_size[1], distortion_scale=self.distortion_scale)
+                # self.persp_params = torch.Tensor(
+                    # [[[0.0, 0.0],  [31.0, 0.0], [31.0, 31.0], [0.0, 31.0]],
+                    # [[10.0, 13.0], [23.0, 0.0], [22.0, 29.0], [3.0, 20.0]]])/(self.resize/16)
+                persp_coeffs = transform_utils.find_perspective_coeffs(*self.persp_params)
+                img = TF.perspective(img, *self.persp_params)
+                face_landmarks = transform_utils.perspective_marks(face_landmarks, persp_coeffs)
             # print('persp', face_landmarks)
-            
+        img = nan_to_num(img)
+        # face_landmarks = nan_to_num(face_landmarks)
         return img, face_landmarks
 
-def test_cnn(resize = 4, landmarks_number = 3, batch_size = 8):
+def test_cnn(resize=4, landmarks_number=3, batch_size=8, epochs=5, shuffle=True, max_affine_deg=120, distortion_scale=0.8):
     print(torchvision.__version__)
     
     
     cnn = CNN_landmarks(landmarks_number, resize)
     ds = FaceLandmarks(Path('./face_landmarks.zip'),
-                       landmarks_number, mode='tensor', resize=resize)
+                       landmarks_number, mode='tensor', resize=resize,
+                       distortion_scale=distortion_scale, max_affine_degree=max_affine_deg)
     optim = torch.optim.Adam(cnn.parameters(), lr=1e-3)
     criterion = torch.nn.MSELoss()
     
-    for epoch in range(5):
-        for bn, (batch_img, batch_landmarks) in enumerate(DataLoader(ds, batch_size=batch_size, shuffle=True)):
+    for epoch in range(epochs):
+        for bn, (batch_img, batch_landmarks) in enumerate(DataLoader(ds, batch_size=batch_size, shuffle=shuffle)):
+            # max = torch.max(batch_landmarks.abs())
+            # if max is np.nan or max > 127:
+                # print(bn, batch_landmarks)
+            # continue
             # print(batch_img.shape[-2:])
             # params = torchvision.transforms.RandomAffine.get_params([-120,120], None, None, None, img_size=batch_img.shape[-2:])
             # print(params)
@@ -155,14 +174,25 @@ def test_cnn(resize = 4, landmarks_number = 3, batch_size = 8):
             # print(batch_landmarks)
             # assert False
             optim.zero_grad()
+            if False:
+                describe_state({'img':batch_img})
+                with open('err.log', 'w') as flog:
+                    for m in batch_img[0]:
+                        for rw in m:
+                            for el in rw:
+                                print(f'{np.float(el):4.1f}', file=flog, end=' ')
+                            print(file=flog)
+                        print(file=flog)
+                    # print(batch_img, file=flog)
             pred_landmarks = cnn(batch_img)
-            loss = criterion(batch_landmarks.view(
-                pred_landmarks.shape), pred_landmarks)
+            loss = criterion(batch_landmarks.view(pred_landmarks.shape), pred_landmarks)
             loss.backward()
             optim.step()
-            if bn % 40 == 0:
+            # if loss != loss:
+                # print('naaaaan')
+            if bn % 80 == 0 or loss != loss:
                 print(
-                    f'{epoch*len(ds) + bn*batch_size:5d} img passed loss = {loss:.3e}')
+                    f'{epoch}_{epoch*len(ds) + bn*batch_size:5d} img passed loss = {loss:.3e}')
                 img = batch_img[0].detach().unsqueeze(0)
                 # print(trans1.transforms[1].get_params(*img.shape[2:], 0.6))
                 # print(trans1.transforms[1].get_params(*img.shape[2:], 0.6))
@@ -180,7 +210,7 @@ def test_cnn(resize = 4, landmarks_number = 3, batch_size = 8):
                 # plt.scatter(landmarks_xy[0], landmarks_xy[1])
                 # print(pred_test)
                 # print(batch_landmarks[0].view(-1))
-                describe_state(cnn.state_dict())
+                # describe_state(cnn.state_dict())
                 plt_utils.draw_marks(pred_test.detach()[0], color='g')
                 plt_utils.draw_marks(batch_landmarks.detach()[0].view(-1), color='r')
                 dlib_utils.draw_landmarks(pil_img, color='blue')
@@ -188,6 +218,9 @@ def test_cnn(resize = 4, landmarks_number = 3, batch_size = 8):
                 
 
                 plt.show()
+                # if loss != loss:
+                    # print(torch.Tensor(pp).tolist())
+                    # assert False
 
     return None
 
