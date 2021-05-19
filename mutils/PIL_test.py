@@ -44,6 +44,8 @@ from torchvision.transforms import functional as TF
 from torchvision.transforms import RandomAffine, RandomPerspective
 import matplotlib
 
+from mutils.unets import LandmarksLoss, UFLandmarks, argmax2d
+
 def nan_to_num(matrix):
     matrix[matrix.isnan()] = 0
     return matrix
@@ -73,13 +75,16 @@ class CNN_landmarks(Module):
         return self.fc(x.view(x.size()[0], -1))
 
 class FaceLandmarks(Dataset):
-    def __init__(self, path: Path, landmarks_number=4, mode='PIL', resize=8, distortion_scale=0.5, max_affine_degree=120):
+    def __init__(self, path: Path, landmarks_number=4, mode='PIL', resize=8, distortion_scale=0.5, max_affine_degree=120, new_size=None):
         # 33 -- nose, 41 -- left eye, 44 -- right eye, 62 -- mouth
         landmarks_list = [41, 44, 33, 62]
         self.landmarks_list = landmarks_list[: landmarks_number]
         self.distortion_scale = distortion_scale
         self.max_affine_degree = max_affine_degree
         self.resize = resize
+        self.new_size = new_size
+        if self.new_size and type(self.new_size) is not tuple:
+            self.new_size = (self.new_size, self.new_size)
         super().__init__()
         self.path = Path('./')
         self.del_path = False
@@ -110,8 +115,10 @@ class FaceLandmarks(Dataset):
         img_path = self.path/'images'/self.all_data[str(index)]['file_name']
         img = Image.open(img_path, 'r')
         size = img.size
-        img = img.resize((size[0] // self.resize, size[1] // self.resize))
-        new_size = img.size
+        if not self.new_size:
+            self.new_size = (size[0] // self.resize, size[1] // self.resize)
+        img = img.resize(self.new_size)
+        # new_size = img.size
         face_landmarks = [
             self.all_data[str(index)]['face_landmarks'][i] for i in self.landmarks_list]
         # face_landmarks = self.all_data[str(index)]['face_landmarks']
@@ -120,13 +127,13 @@ class FaceLandmarks(Dataset):
             face_landmarks = torch.Tensor(face_landmarks) / self.resize
             if self.max_affine_degree > 0:
                 affine_inerval = [-self.max_affine_degree, self.max_affine_degree]
-                affine_params = self.get_rand_affine_params(affine_inerval, None, None, None, img_size=new_size)
+                affine_params = self.get_rand_affine_params(affine_inerval, None, None, None, img_size=self.new_size)
                 img = TF.affine(img, *affine_params, resample=2)
-                face_landmarks = transform_utils.rotate_marks(face_landmarks, affine_params[0], array(new_size)/2)
+                face_landmarks = transform_utils.rotate_marks(face_landmarks, affine_params[0], array(self.new_size)/2)
             # print('p_params', persp_params)
             # print('aff', face_landmarks)
             if self.distortion_scale > 0:
-                self.persp_params = self.get_rand_perspective_params(width=new_size[0], height=new_size[1], distortion_scale=self.distortion_scale)
+                self.persp_params = self.get_rand_perspective_params(width=self.new_size[0], height=self.new_size[1], distortion_scale=self.distortion_scale)
                 # self.persp_params = torch.Tensor(
                     # [[[0.0, 0.0],  [31.0, 0.0], [31.0, 31.0], [0.0, 31.0]],
                     # [[10.0, 13.0], [23.0, 0.0], [22.0, 29.0], [3.0, 20.0]]])/(self.resize/16)
@@ -214,6 +221,65 @@ def test_cnn(resize=4, landmarks_number=3, batch_size=8, epochs=5, shuffle=True,
                 plt_utils.draw_marks(pred_test.detach()[0], color='g')
                 plt_utils.draw_marks(batch_landmarks.detach()[0].view(-1), color='r')
                 dlib_utils.draw_landmarks(pil_img, color='blue')
+                # assert False
+                
+
+                plt.show()
+                # if loss != loss:
+                    # print(torch.Tensor(pp).tolist())
+                    # assert False
+
+    return None
+
+def test_unet(resize=4, landmarks_number=3, batch_size=8, epochs=5, shuffle=True,
+              max_affine_deg=0, distortion_scale=0.):
+    print(torchvision.__version__)
+    
+    
+    model = UFLandmarks(3, landmarks_number)
+
+    ds = FaceLandmarks(Path('./face_landmarks.zip'),
+                       landmarks_number, mode='tensor', resize=resize, #new_size=96,
+                       distortion_scale=distortion_scale, max_affine_degree=max_affine_deg)
+    optim = torch.optim.Adam(model.parameters(), lr=1e-3)
+    criterion = LandmarksLoss('round_5gauss', sigma=4.)
+
+    
+    for epoch in range(epochs):
+        for bn, (batch_img, batch_landmarks) in enumerate(DataLoader(ds, batch_size=batch_size, shuffle=shuffle)):
+            optim.zero_grad()
+
+            pred_heatmap = model(batch_img)
+            loss = criterion(pred_heatmap, batch_landmarks.view(-1,2))
+            loss.backward()
+            optim.step()
+            # if loss != loss:
+                # print('naaaaan')
+            if bn % 10 == 0 or loss != loss:
+                print(
+                    f'{epoch}_{epoch*len(ds) + bn*batch_size:5d} img passed loss = {loss:.3e}')
+                img = batch_img[0].detach().unsqueeze(0)
+                with torch.no_grad():
+                    pred_test = model(img.detach()).detach()
+                pred_marks = argmax2d(pred_test)#, dim=(-2, -1))
+                pil_img = ToPILImage()(img[0])
+                ax = plt.subplot(131)   
+                ax.imshow(pil_img)
+                ax = plt.subplot(132)
+                true_heatmap = criterion.get_heatmap_from(batch_landmarks.detach().view(-1),
+                                                        pred_heatmap.shape, criterion.bell)
+                sum_heatmap = torch.zeros_like(pred_heatmap[0][0])
+                for mn in range(landmarks_number):
+                    sum_heatmap = sum_heatmap + pred_heatmap[0][mn]
+                ax.imshow(ToPILImage()(sum_heatmap), alpha=0.5)
+                plt_utils.draw_marks(pred_marks[0].view(-1), color='r')
+                ax = plt.subplot(133)
+                sum_heatmap = torch.zeros_like(true_heatmap[0][0])
+                for mn in range(landmarks_number):
+                    sum_heatmap = sum_heatmap + true_heatmap[0][mn]
+                ax.imshow(ToPILImage()(sum_heatmap), alpha=1.)
+                # plt_utils.draw_marks(batch_landmarks.detach()[0].view(-1), color='g')
+                # dlib_utils.draw_landmarks(pil_img, color='blue')
                 # assert False
                 
 
