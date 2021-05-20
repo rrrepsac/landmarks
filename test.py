@@ -1,20 +1,13 @@
 #%%
-from zipfile import ZipFile
-import time
-t1 = time.clock_gettime_ns(time.CLOCK_MONOTONIC)
-# print('t=', t1)
-with ZipFile('celebA/archive.zip', 'r') as zip:
-    for file in zip.filelist[:1000]:
-        # fr = zip.read(file)
-        # with open('1__.jpg', 'wb') as f:
-            # f.write(fr)
-        fn_beg = file.filename.rfind('/')
-        fname = file.filename[fn_beg + 1:]
-        out_path = zip.extract(file, path='/home/honor/projects/landmarks/celebA/img' + fname)
-        # print(file.filename, out_path)
-    # zip.extractall()
-t2 = time.clock_gettime_ns(time.CLOCK_MONOTONIC)
-print('t=', t2, (t2 - t1)/1e9)
+from mutils.unets import LandmarksLoss
+import numpy as np
+lmLoss = LandmarksLoss(mode='round_5gauss', sigma=1.)
+shape = (224,224)
+bell = np.zeros(shape)
+bell = lmLoss.bell[32:-32, 32:-32].numpy()
+import matplotlib.pyplot as plt
+plt.imshow(bell)
+plt.show()
 #%%
 import mutils.PIL_test
 import mutils
@@ -36,6 +29,10 @@ y *= 0
 y = mutils.unets.bell_5gauss(x)
 print(y)
 #%%
+import importlib
+import mutils
+import mutils.PIL_test
+
 importlib.reload(mutils.PIL_test)
 mutils.PIL_test.test_unet(resize=8, landmarks_number=2, batch_size=8,
 max_affine_deg=50., distortion_scale=0.6)

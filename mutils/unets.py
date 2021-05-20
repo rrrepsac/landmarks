@@ -112,7 +112,8 @@ class LandmarksLoss(Module):
     def forward(self, pred_heatmap, true_landmarks):
         # pred_heatmap.shape == (batch_size, maps_number, H, W)
         # true_landmarks.shape == (maps_number, 2)
-        true_heatmap = self.get_heatmap_from(true_landmarks, pred_heatmap.shape, self.bell)
+        device = pred_heatmap.device
+        true_heatmap = self.get_heatmap_from(true_landmarks, pred_heatmap.shape, self.bell).to(device)
         return self.loss(pred_heatmap, true_heatmap)
 
 class DiceLoss(Module):
