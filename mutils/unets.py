@@ -81,11 +81,12 @@ class LandmarksLoss(Module):
         bell_func = partial(gauss, sigma=sigma)
         if '5gauss' in mode:
             bell_func = bell_5gauss
-        self.bell = torch.zeros((self.delta, self.delta))
+        self.bell = np.zeros((self.delta, self.delta))
         for x in range(self.delta):
             for y in range(self.delta):
                 r = sqrt((x - self.delta/2)**2 + (y - self.delta/2)**2)
                 self.bell[x, y] = bell_func(r)
+        self.bell = torch.tensor(self.bell)
         # for x in range(self.delta):
             # for y in range(self.delta):
                 # self.bell[self.img_size[0]//2 + x, self.img_size[1]//2 + y] = \
