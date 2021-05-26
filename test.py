@@ -1,12 +1,25 @@
 #%%
-from mutils.unets import LandmarksLoss
+import importlib
+import mutils
+import mutils.PIL_test
+
+importlib.reload(mutils.PIL_test)
+mutils.PIL_test.test_unet(resize=8, landmarks_number=2, batch_size=8,
+max_affine_deg=10., distortion_scale=0.4)
+assert False
+#%%
+import torch
+from mutils.unets import LandmarksLoss, get_heatmap_from
 import numpy as np
 lmLoss = LandmarksLoss(mode='round_5gauss', sigma=1.)
-shape = (224,224)
+shape = (64,64)
 bell = np.zeros(shape)
-bell = lmLoss.bell[32:-32, 32:-32].numpy()
+bell = get_heatmap_from(
+    torch.tensor([32.,32.]),(1,1,64,64),lmLoss.bell)
+
+#bell = lmLoss.bell[32:-32, 32:-32].numpy()
 import matplotlib.pyplot as plt
-plt.imshow(bell)
+plt.imshow(bell.squeeze().numpy())
 plt.show()
 #%%
 import mutils.PIL_test
@@ -28,15 +41,7 @@ for k in range(5):
 y *= 0
 y = mutils.unets.bell_5gauss(x)
 print(y)
-#%%
-import importlib
-import mutils
-import mutils.PIL_test
 
-importlib.reload(mutils.PIL_test)
-mutils.PIL_test.test_unet(resize=8, landmarks_number=2, batch_size=8,
-max_affine_deg=50., distortion_scale=0.6)
-assert False
 # PIL_test.test_cnn(16, 3, 1, epochs=2, shuffle=False,
                 #   max_affine_deg=0, distortion_scale=0.99)
 
