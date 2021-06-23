@@ -62,7 +62,37 @@ def argmax2d(matrix):
     args2d = tmp.view(*shape[:-2],2)
     return args2d
 
+def bell_max(matrix, bell):
+    min_loss = None
+    arg_max  = None
+    for x in range(matrix.shape[0]):
+        for y in range(matrix.shape[1]):
+            xy_heatmap = get_heatmap_from(torch.tensor([x,y]), matrix.shape, bell)
+            loss = torch.nn.MSELoss()(xy_heatmap, matrix)
+            if min_loss is None or loss < min_loss:
+                min_loss = loss
+                arg_max = (x, y)
+    return arg_max
     
+def get_heatmap_from(marks, shape, bell):
+    if len(shape) == 2:
+        shape = torch.Size([1, 1, *shape])
+    true_heatmap = torch.zeros(shape)
+    batch_size, landmarks_num, H, W = shape
+    for img_num, marks in enumerate(marks.view(batch_size, -1)):
+        for mark_num, (y, x) in enumerate(marks.view(landmarks_num, 2)):
+            x_rounded = torch.round(x/1).long()
+            y_rounded = torch.round(y/1).long()
+            x_left = x_rounded - max(0, x_rounded - bell.shape[0]//2)
+            x_right= min(H, x_rounded + bell.shape[0] - bell.shape[0]//2) - x_rounded
+            y_high = min(W, y_rounded + bell.shape[1] - bell.shape[1]//2) - y_rounded
+            y_low  = y_rounded - max(0, y_rounded - bell.shape[1]//2)
+            true_heatmap[img_num, mark_num, x_rounded - x_left:x_rounded + x_right,
+                        y_rounded - y_low:y_rounded + y_high] = bell[
+                        bell.shape[0]//2 - x_left: bell.shape[0]//2 + x_right,
+                        bell.shape[0]//2 - y_low : bell.shape[1]//2 + y_high]
+    return true_heatmap
+
 class LandmarksLoss(Module):
     def __init__(self, mode='round_5gauss', sigma=1., img_size=224):
         super().__init__()
@@ -93,27 +123,11 @@ class LandmarksLoss(Module):
                 # bell_func(sqrt(x**2 + y**2))
         self.loss = torch.nn.MSELoss()
 
-    def get_heatmap_from(self, marks, shape, bell):
-        true_heatmap = torch.zeros(shape)
-        batch_size, landmarks_num, H, W = shape
-        for img_num, marks in enumerate(marks.view(batch_size, -1)):
-            for mark_num, (y, x) in enumerate(marks.view(landmarks_num, 2)):
-                x_rounded = torch.round(x).long()
-                y_rounded = torch.round(y).long()
-                x_left = x_rounded - max(0, x_rounded - bell.shape[0]//2)
-                x_right= min(H, x_rounded + bell.shape[0] - bell.shape[0]//2) - x_rounded
-                y_high = min(W, y_rounded + bell.shape[1] - bell.shape[1]//2) - y_rounded
-                y_low  = y_rounded - max(0, y_rounded - bell.shape[1]//2)
-                true_heatmap[img_num, mark_num, x_rounded - x_left:x_rounded + x_right,
-                            y_rounded - y_low:y_rounded + y_high] = bell[
-                            bell.shape[0]//2 - x_left: bell.shape[0]//2 + x_right,
-                            bell.shape[0]//2 - y_low : bell.shape[1]//2 + y_high]
-        return true_heatmap
     def forward(self, pred_heatmap, true_landmarks):
         # pred_heatmap.shape == (batch_size, maps_number, H, W)
         # true_landmarks.shape == (maps_number, 2)
         device = pred_heatmap.device
-        true_heatmap = self.get_heatmap_from(true_landmarks, pred_heatmap.shape, self.bell).to(device)
+        true_heatmap = get_heatmap_from(true_landmarks, pred_heatmap.shape, self.bell).to(device)
         return self.loss(pred_heatmap, true_heatmap)
 
 class DiceLoss(Module):

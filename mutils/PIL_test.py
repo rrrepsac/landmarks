@@ -6,6 +6,7 @@ Created on Mon Mar 22 14:22:42 2021
 @author: honor
 """
 
+from .unets import bell_max, get_heatmap_from
 import PIL
 from PIL import Image
 import matplotlib.pyplot as plt
@@ -242,7 +243,7 @@ def test_unet(resize=4, landmarks_number=3, batch_size=8, epochs=5, shuffle=True
                        landmarks_number, mode='tensor', resize=resize, #new_size=96,
                        distortion_scale=distortion_scale, max_affine_degree=max_affine_deg)
     optim = torch.optim.Adam(model.parameters(), lr=1e-3)
-    criterion = LandmarksLoss('round_5gauss', sigma=4.)
+    criterion = LandmarksLoss('round_gauss', sigma=4.)
 
     
     for epoch in range(epochs):
@@ -266,18 +267,26 @@ def test_unet(resize=4, landmarks_number=3, batch_size=8, epochs=5, shuffle=True
                 ax = plt.subplot(131)   
                 ax.imshow(pil_img)
                 ax = plt.subplot(132)
-                true_heatmap = criterion.get_heatmap_from(batch_landmarks.detach().view(-1),
+                true_heatmap = get_heatmap_from(batch_landmarks.detach().view(-1),
                                                         pred_heatmap.shape, criterion.bell)
                 sum_heatmap = torch.zeros_like(pred_heatmap[0][0])
                 for mn in range(landmarks_number):
                     sum_heatmap = sum_heatmap + pred_heatmap[0][mn]
+                    break
+                arg_pred = bell_max(sum_heatmap, criterion.bell)
                 ax.imshow(ToPILImage()(sum_heatmap), alpha=0.5)
-                plt_utils.draw_marks(pred_marks[0].view(-1), color='r')
+                print(arg_pred, ' -- predict')
+                ax.scatter(arg_pred[0], arg_pred[1], color='green')
+                # plt_utils.draw_marks(pred_marks[0].view(-1), color='r')
                 ax = plt.subplot(133)
                 sum_heatmap = torch.zeros_like(true_heatmap[0][0])
                 for mn in range(landmarks_number):
                     sum_heatmap = sum_heatmap + true_heatmap[0][mn]
+                    break
                 ax.imshow(ToPILImage()(sum_heatmap), alpha=1.)
+                arg_pred = bell_max(sum_heatmap, criterion.bell)
+                print(arg_pred, ' -- true')
+                ax.scatter(arg_pred[0], arg_pred[1], color='red')
                 # plt_utils.draw_marks(batch_landmarks.detach()[0].view(-1), color='g')
                 # dlib_utils.draw_landmarks(pil_img, color='blue')
                 # assert False
