@@ -13,9 +13,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 from numpy.linalg import det, norm
 import torch
-import torchvision
-from torchvision.transforms import Compose, Resize, ToTensor, ToPILImage,\
-     RandomAffine, RandomPerspective
 from torch.utils.data import Dataset, DataLoader
 
 from . import plt_utils
@@ -41,6 +38,8 @@ import json
 import shutil
 from torch.nn import Module, Sequential, Conv2d, MaxPool2d, AdaptiveMaxPool2d,\
     BatchNorm2d, Dropout, ReLU, Tanh, Sigmoid, Linear
+import torchvision
+from torchvision.transforms import Compose, Resize, ToTensor, ToPILImage
 from torchvision.transforms import functional as TF
 from torchvision.transforms import RandomAffine, RandomPerspective
 import matplotlib
